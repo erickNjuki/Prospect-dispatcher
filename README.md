@@ -36,7 +36,6 @@ You give it a lead (a form fill, a demo request, a content download). It cleans 
 - [Tests](#tests)
 - [Project layout](#project-layout)
 - [Limitations](#limitations)
-- [License](#license)
 
 ## Why this exists
 
@@ -447,7 +446,3 @@ tests/                  guards, matching, SLA, round-robin, config and CLI error
 - Enrichment is a local lookup table, not a live API call.
 - Round-robin is a simple rotation. It doesn't account for rep capacity, time off or working hours.
 - SLAs are wall-clock minutes from `received_at`. They don't pause outside business hours or on weekends.
-
-## License
-
-MIT
