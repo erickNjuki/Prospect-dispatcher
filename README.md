@@ -4,7 +4,7 @@
 </picture>
 
 <p>
-  <a href="https://github.com/joshuaforwork10-sys/inbound-lead-router/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/joshuaforwork10-sys/inbound-lead-router/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="https://github.com/erickNjuki/inbound-lead-router/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/erickNjuki/inbound-lead-router/actions/workflows/tests.yml/badge.svg"></a>
   <img alt="Python 3.10 to 3.13" src="https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-2457E6">
   <img alt="Zero runtime dependencies" src="https://img.shields.io/badge/dependencies-zero-047857">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-475569">
