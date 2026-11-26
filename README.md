@@ -170,13 +170,17 @@ Lead 02 as the JSON plan a downstream worker would execute (`python3 -m router s
 
 | Guard | What it stops | Result |
 |---|---|---|
-| Do-not-contact email or domain | Any outreach to someone who opted out | Checked before any lookup. Plan is `log_only`. |
+| Invalid lead | A lead with no usable email or no timezone-aware `received_at` getting a made-up owner or SLA | Checked first. Outcome `needs_review`, plan is `manual_review`. |
+| Do-not-contact email or domain | Any outreach to someone who opted out | Checked before any lookup. `+tags` are ignored (`no-sales+promo@` still matches `no-sales@`) and a blocked domain covers its subdomains. Plan is `log_only`. |
 | Do-not-contact account | Outreach to a company that asked to be left alone | `log_only`, no owner |
 | Open deal | A second rep starting a parallel conversation on a live deal | Routes to the deal owner, even when the account owner is someone else. No new sequence. |
 | Personal email domain | `gmail.com` matching every other Gmail lead, or enriching a free-mail domain | Skips domain match and enrichment, tries the company name, otherwise nurture |
+| Unknown source | A new form source quietly getting the wrong SLA | Falls back to `contact_sales` and writes that into the decision path |
 | ID hint without evidence | A stale CRM id on a form merging a lead into the wrong account | The hint is logged and ignored. Only domain or name evidence makes a match. |
 
-Matching settings, territories, SLA minutes per source and the personal-domain list live in `data/routing.json`.
+Domain matching and enrichment walk up subdomains, so `mail.fabrikam.example` matches the `fabrikam.example` account and isn't created again as a duplicate.
+
+Matching settings, territories, SLA minutes per source and the personal-domain list live in `data/routing.json`. The CLI validates that file on load (empty territory pools, a missing `contact_sales` source, duplicate territory names, a threshold out of range) and exits with code 2 instead of failing partway through a batch. A lead file that isn't valid JSON is reported on stderr, the rest of the batch still runs, and the exit code is 1.
 
 ## Design decisions
 
@@ -195,7 +199,7 @@ data/routing.json       threshold, guards, territories, SLAs, sequences
 router/route.py         normalize, enrich, match, guards, assign, plan
 router/__main__.py      CLI
 samples/leads/          six leads, one per path
-tests/                  one test per guard plus matching, SLA and round-robin
+tests/                  one test per guard plus matching, SLA, round-robin, config and CLI errors
 ```
 
 ## License

@@ -8,6 +8,7 @@ from difflib import SequenceMatcher
 from typing import List, Optional
 
 SUFFIXES = {"inc", "llc", "ltd", "corp", "corporation", "co", "company", "gmbh", "plc", "the"}
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s.]+$")
 
 
 @dataclass
@@ -46,9 +47,39 @@ def normalize(raw: dict) -> dict:
         "name": " ".join(p.strip().title() for p in (raw.get("first_name", ""), raw.get("last_name", "")) if p.strip()),
         "company": re.sub(r"\s+", " ", (raw.get("company") or "").strip()),
         "source": (raw.get("source") or "contact_sales").strip().lower(),
-        "received_at": raw["received_at"],
+        "received_at": (raw.get("received_at") or "").strip(),
         "crm_account_id": raw.get("crm_account_id"),
     }
+
+
+def domain_chain(domain: str) -> List[str]:
+    """'eu.mail.acme.example' -> ['eu.mail.acme.example', 'mail.acme.example', 'acme.example']."""
+    parts = domain.split(".")
+    return [".".join(parts[i:]) for i in range(max(len(parts) - 1, 1))] if domain else []
+
+
+def canonical_email(email: str) -> str:
+    """Drop a '+tag' so 'no-sales+promo@x.example' still hits a do-not-contact entry for 'no-sales@x.example'."""
+    local, _, domain = email.partition("@")
+    return f"{local.split('+', 1)[0]}@{domain}"
+
+
+def parse_time(value: str) -> Optional[datetime]:
+    try:
+        t = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else None
+
+
+def invalid_reason(lead: dict) -> Optional[str]:
+    if not EMAIL_RE.match(lead["email"]):
+        return f"email '{lead['email']}' is missing or invalid"
+    if not lead["received_at"]:
+        return "received_at is missing"
+    if parse_time(lead["received_at"]) is None:
+        return f"received_at '{lead['received_at']}' is not an ISO 8601 time with a timezone"
+    return None
 
 
 def company_key(name: str) -> str:
@@ -61,9 +92,12 @@ def company_key(name: str) -> str:
 def match_account(lead: dict, ctx: Context, plan: Plan, personal: bool):
     """Domain first, then fuzzy company name. An ID hint alone never makes a match."""
     if not personal and lead["domain"]:
-        for a in ctx.accounts:
-            if a["domain"] == lead["domain"]:
-                plan.step("match", f"domain {lead['domain']} = {a['id']} {a['name']}")
+        by_domain = {a["domain"].lower(): a for a in ctx.accounts if a.get("domain")}
+        for d in domain_chain(lead["domain"]):  # exact domain first, then parent domains
+            a = by_domain.get(d)
+            if a:
+                via = "" if d == lead["domain"] else f" (parent of {lead['domain']})"
+                plan.step("match", f"domain {d}{via} = {a['id']} {a['name']}")
                 return a
         plan.step("match", f"no account with domain {lead['domain']}")
     best, best_score = None, 0.0
@@ -104,8 +138,10 @@ def round_robin(name: str, pool: list, ctx: Context) -> str:
 
 
 def sla_due(received_at: str, minutes: int) -> str:
-    t = datetime.fromisoformat(received_at.replace("Z", "+00:00")) + timedelta(minutes=minutes)
-    return t.isoformat().replace("+00:00", "Z")
+    t = parse_time(received_at)
+    if t is None:
+        raise ValueError(f"received_at '{received_at}' is not an ISO 8601 time with a timezone")
+    return (t + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
 
 
 # ------------------------------------------------------------------ the router
@@ -114,19 +150,36 @@ def route(raw: dict, ctx: Context) -> Plan:
     lead = normalize(raw)
     plan = Plan(lead=lead)
     plan.step("normalize", f"{lead['email']} | company '{lead['company']}' | source {lead['source']}")
-    src = cfg["sources"].get(lead["source"], cfg["sources"]["contact_sales"])
+
+    # guard: a lead we cannot identify or time-stamp goes to a person, not a rep
+    bad = invalid_reason(lead)
+    if bad:
+        plan.step("guard", f"{bad}: send to manual review")
+        plan.outcome = "needs_review"
+        plan.actions.append({"type": "manual_review", "reason": bad})
+        return plan
 
     # guard: do not contact runs first, before any lookup decides an owner
     dnc = cfg["do_not_contact"]
-    if lead["email"] in dnc["emails"] or lead["domain"] in dnc["domains"]:
+    dnc_emails = {e.lower() for e in dnc["emails"]}
+    dnc_domains = {d.lower() for d in dnc["domains"]}
+    if lead["email"] in dnc_emails or canonical_email(lead["email"]) in dnc_emails:
         return suppress(plan, f"{lead['email']} is on the do-not-contact list")
+    blocked = next((d for d in domain_chain(lead["domain"]) if d in dnc_domains), None)
+    if blocked:
+        return suppress(plan, f"domain {blocked} is on the do-not-contact list")
+
+    src = cfg["sources"].get(lead["source"])
+    if src is None:
+        plan.step("guard", f"source '{lead['source']}' is not configured: use contact_sales SLA and sequence")
+        src = cfg["sources"]["contact_sales"]
 
     personal = lead["domain"] in cfg["personal_domains"]
     if personal:
         plan.step("guard", f"personal email domain {lead['domain']}: skip domain match and enrichment")
         info = None
     else:
-        info = ctx.enrichment.get(lead["domain"])
+        info = next((ctx.enrichment[d] for d in domain_chain(lead["domain"]) if d in ctx.enrichment), None)
         if info:
             lead["enrichment"] = info
             plan.step("enrich", f"{info['company']} | {info['region']} | {info['employees']} employees | {info['industry']}")
