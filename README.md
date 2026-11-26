@@ -17,7 +17,9 @@ Takes an inbound lead, matches it to the right account, runs the guards a real s
 ```mermaid
 flowchart TD
     L[Inbound lead JSON] --> N[Normalize<br/>trim, lowercase, title-case]
-    N --> D{Do-not-contact<br/>email or domain?}
+    N --> V{Valid email and<br/>received_at?}
+    V -- no --> R[Needs review:<br/>manual_review only]
+    V -- yes --> D{Do-not-contact<br/>email or domain?}
     D -- yes --> S[Suppress: log only]
     D -- no --> P{Personal email<br/>domain?}
     P -- no --> E[Enrich from<br/>local lookup] --> M1{Domain match?}
